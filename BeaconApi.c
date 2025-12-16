@@ -455,7 +455,7 @@ BOOL BeaconInformation(PBEACON_INFO info)
         return FALSE;
     
     // 填充基本信息
-    info->version = 0x041000; // 版本 4.10
+    // info->version = 0x041000; // 版本 4.10
     info->sleep_mask_ptr = NULL;
     info->sleep_mask_text_size = 0;
     info->sleep_mask_total_size = 0;
@@ -531,7 +531,7 @@ BOOL BeaconGetThreadContext(HANDLE threadHandle, PCONTEXT threadContext)
     return GetThreadContext(threadHandle, threadContext);
 }
 
-BOOL BeaconSetThreadContext(HANDLE threadHandle, PCONTEXT threadContext)
+BOOL BeaconSetThreadContext(HANDLE threadHandle, const CONTEXT * threadContext)
 {
     return SetThreadContext(threadHandle, threadContext);
 }

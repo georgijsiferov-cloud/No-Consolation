@@ -127,4 +127,63 @@ UINT32 swap_endianess(UINT32 indata);
 
 char* BeaconGetOutputData(int *outsize);
 
+/* =================== Beacon API Extension =================== */
+
+typedef struct {
+    char * ptr;
+    size_t size;
+} HEAP_RECORD;
+
+#define MASK_SIZE 13
+
+typedef struct {
+    char  * sleep_mask_ptr;
+    DWORD   sleep_mask_text_size;
+    DWORD   sleep_mask_total_size;
+
+    char  * beacon_ptr;
+    DWORD * sections;
+    HEAP_RECORD * heap_records;
+    char    mask[MASK_SIZE];
+} BEACON_INFO, *PBEACON_INFO;
+
+typedef struct {
+    int type;
+    DWORD64 hash;
+    BOOL masked;
+    char* buffer;
+    size_t length;
+} DATA_STORE_OBJECT, *PDATA_STORE_OBJECT;
+
+typedef void* PBEACON_SYSCALLS;
+
+BOOL BeaconAddValue(const char* key, void* ptr);
+void* BeaconGetValue(const char* key);
+BOOL BeaconRemoveValue(const char* key);
+BOOL BeaconInformation(PBEACON_INFO info);
+char* BeaconGetCustomUserData();
+PDATA_STORE_OBJECT BeaconDataStoreGetItem(size_t index);
+void BeaconDataStoreProtectItem(size_t index);
+void BeaconDataStoreUnprotectItem(size_t index);
+ULONG BeaconDataStoreMaxEntries();
+BOOL BeaconGetSyscallInformation(PBEACON_SYSCALLS info, BOOL resolveIfNotInitialized);
+
+/* Memory / Thread / Process APIs */
+LPVOID BeaconVirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
+LPVOID BeaconVirtualAllocEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
+BOOL BeaconVirtualProtect(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
+BOOL BeaconVirtualProtectEx(HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect);
+BOOL BeaconVirtualFree(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType);
+BOOL BeaconGetThreadContext(HANDLE hThread, LPCONTEXT lpContext);
+BOOL BeaconSetThreadContext(HANDLE hThread, const CONTEXT *lpContext);
+DWORD BeaconResumeThread(HANDLE hThread);
+HANDLE BeaconOpenProcess(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId);
+HANDLE BeaconOpenThread(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwThreadId);
+BOOL BeaconCloseHandle(HANDLE hObject);
+BOOL BeaconUnmapViewOfFile(LPCVOID lpBaseAddress);
+SIZE_T BeaconVirtualQuery(LPCVOID lpAddress, PMEMORY_BASIC_INFORMATION lpBuffer, SIZE_T dwLength);
+BOOL BeaconDuplicateHandle(HANDLE hSourceProcessHandle, HANDLE hSourceHandle, HANDLE hTargetProcessHandle, LPHANDLE lpTargetHandle, DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwOptions);
+BOOL BeaconReadProcessMemory(HANDLE hProcess, LPCVOID lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesRead);
+BOOL BeaconWriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesWritten);
+
 #endif
