@@ -1,5 +1,5 @@
 #include "CoffeeLdr.h" 
-#include "BeaconApi.h" 
+#include "BeaconApi.h"
 
 #if defined( __x86_64__ ) || defined( _WIN64 )
 #define COFF_PREP_SYMBOL      0xec598a48
@@ -90,8 +90,20 @@ BOOL CoffeeExecuteFunction( PCOFFEE Coffee, PCHAR Function, PVOID Argument, SIZE
     DWORD      OldProtection = 0;
     BOOL       Success       = FALSE;
 
+    // 参数验证
+    if (!Coffee || !Function) {
+        DEBUG_PRINT("[!] Invalid parameters: Coffee=%p, Function=%p\n", Coffee, Function);
+        return FALSE;
+    }
+
     if (Coffee->dwCodeSection == (DWORD)-1) {
         DEBUG_PRINT("[!] Code section not found in COFF object.\n");
+        return FALSE;
+    }
+
+    // 验证函数地址是否在有效范围内
+    if (!Coffee->SecMap || !Coffee->Header) {
+        DEBUG_PRINT("[!] Coffee structure is incomplete\n");
         return FALSE;
     }
 
@@ -99,18 +111,86 @@ BOOL CoffeeExecuteFunction( PCOFFEE Coffee, PCHAR Function, PVOID Argument, SIZE
     {
         if ( strcmp( Coffee->Symbol[ SymCounter ].First.Name, Function ) == 0 )
         {
+            // 验证节号是否有效
+            if (Coffee->Symbol[ SymCounter ].SectionNumber == 0 || 
+                Coffee->Symbol[ SymCounter ].SectionNumber > Coffee->Header->NumberOfSections) {
+                DEBUG_PRINT("[!] Invalid section number: %d\n", Coffee->Symbol[ SymCounter ].SectionNumber);
+                return FALSE;
+            }
+
             CoffeeMain = ( COFFEEMAIN ) ( Coffee->SecMap[ Coffee->Symbol[ SymCounter ].SectionNumber - 1 ].Ptr + Coffee->Symbol[ SymCounter ].Value );
             
-            DEBUG_PRINT("[*] Executing function '%s' at address %p\n", Function, CoffeeMain);
+            // 验证函数地址
+            if (!CoffeeMain || (UINT_PTR)CoffeeMain < 0x10000) {
+                DEBUG_PRINT("[!] Invalid function address: %p\n", CoffeeMain);
+                return FALSE;
+            }
 
-            if (!VirtualProtect(Coffee->SecMap[Coffee->dwCodeSection].Ptr, Coffee->SecMap[Coffee->dwCodeSection].Size, PAGE_EXECUTE_READ, &OldProtection)) {
+            // 计算函数相对于代码段基址的偏移
+            UINT_PTR codeSectionBase = (UINT_PTR)Coffee->SecMap[Coffee->dwCodeSection].Ptr;
+            UINT_PTR functionOffset = (UINT_PTR)CoffeeMain - codeSectionBase;
+            
+            DEBUG_PRINT("[*] Executing function '%s' at address %p\n", Function, CoffeeMain);
+            DEBUG_PRINT("[*] Function offset in code section: 0x%llx (base: %p)\n", functionOffset, (PVOID)codeSectionBase);
+            DEBUG_PRINT("[*] Function arguments: %p (size: %lu)\n", Argument, (ULONG)Size);
+            DEBUG_PRINT("[*] Code section info: ptr=%p, size=%llu\n", 
+                       Coffee->SecMap[Coffee->dwCodeSection].Ptr, 
+                       Coffee->SecMap[Coffee->dwCodeSection].Size);
+
+            // 验证参数缓冲区
+            if (Argument && Size > 0) {
+                DEBUG_PRINT("[*] Validating argument buffer (size: %lu)...\n", (ULONG)Size);
+                
+                // 检查缓冲区大小是否合理
+                if (Size > 1024 * 1024) { // 1MB 限制
+                    DEBUG_PRINT("[!] Warning: Argument size is very large (%lu bytes)\n", (ULONG)Size);
+                }
+                
+                // 检查参数是否为有效指针
+                if (IsBadReadPtr(Argument, Size)) {
+                    DEBUG_PRINT("[!] Argument buffer is not readable or invalid\n");
+                    DEBUG_PRINT("[!] This may cause BeaconDataParse to crash\n");
+                    DEBUG_PRINT("[!] Buffer address: %p, size: %lu\n", Argument, (ULONG)Size);
+                } else {
+                    DEBUG_PRINT("[*] Argument buffer validation passed\n");
+                    
+                    // 显示前几个字节的内容（用于调试）
+                    if (Size >= 4) {
+                        DWORD* firstDword = (DWORD*)Argument;
+                        DEBUG_PRINT("[*] First 4 bytes: 0x%08lx\n", *firstDword);
+                    }
+                }
+            } else {
+                DEBUG_PRINT("[*] No argument buffer provided (this is normal for some functions)\n");
+            }
+
+            if (!VirtualProtect(Coffee->SecMap[Coffee->dwCodeSection].Ptr, 
+                               Coffee->SecMap[Coffee->dwCodeSection].Size, 
+                               PAGE_EXECUTE_READ, &OldProtection)) {
                 DEBUG_PRINT("[!] VirtualProtect to RX failed with error: %lu\n", GetLastError());
                 return FALSE;
             }
+
+            // 执行前的最后检查
+            DEBUG_PRINT("[*] Pre-execution checks:\n");
+            DEBUG_PRINT("  - Code section base: %p\n", Coffee->SecMap[Coffee->dwCodeSection].Ptr);
+            DEBUG_PRINT("  - Function address: %p\n", CoffeeMain);
+            DEBUG_PRINT("  - Arguments: %p, %lu\n", Argument, (ULONG)Size);
+            DEBUG_PRINT("  - Old protection: 0x%lx\n", OldProtection);
+            
+            // 调用函数 - 如果这里崩溃，调试器会捕获到
+            DEBUG_PRINT("[*] Calling function '%s'...\n", Function);
+            DEBUG_PRINT("[*] Function will be called with:\n");
+            DEBUG_PRINT("    Buffer: %p\n", Argument);
+            DEBUG_PRINT("    Length: %lu\n", (ULONG)Size);
             
             CoffeeMain( (PCHAR)Argument, (ULONG)Size );
             
-            VirtualProtect(Coffee->SecMap[Coffee->dwCodeSection].Ptr, Coffee->SecMap[Coffee->dwCodeSection].Size, OldProtection, &OldProtection);
+            DEBUG_PRINT("[*] Function '%s' completed successfully\n", Function);
+            
+            VirtualProtect(Coffee->SecMap[Coffee->dwCodeSection].Ptr, 
+                          Coffee->SecMap[Coffee->dwCodeSection].Size, 
+                          OldProtection, &OldProtection);
             
             Success = TRUE;
             break;

@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <excpt.h>
 
 #define U_PTR( x ) ( ( UINT_PTR ) x )
 #define C_PTR( x ) ( ( PVOID ) x )

@@ -1,4 +1,5 @@
 #include "utils.h"
+#include <limits.h>
 
 #ifdef _WIN64
 

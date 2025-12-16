@@ -1,62 +1,122 @@
 # 修改日志
 
-## 修复 BeaconApi 崩溃问题
+## 修复 CoffeeLoad 崩溃问题
 
 ### 问题描述
-1.  **编译错误**: `BeaconApi.c` 中使用了未声明的函数和宏，例如 `BeaconAddValue`, `BeaconGetValue` 等，导致 `x86_64-w64-mingw32-gcc` 编译失败。此外，`BEACON_INFO` 结构体和相关类型定义缺失。
-2.  **运行时错误**: 即使修复了编译错误，运行 `beacon.exe` 加载 BOF 时报错 `[!] Failed to resolve symbol: __imp_BeaconGetValue`。这是因为 `BeaconApi.h` 中定义的 API 哈希值与 `CoffeeLdr.c` 中使用的哈希算法（djb2, HASH_KEY=5381）计算出的值不匹配。
-3.  **程序崩溃**: 修复符号解析错误后，程序在执行时崩溃，提示"BeaconGetValue实现不正确导致程序crash"。
+1.  **程序崩溃**: 在成功加载sections和处理重定位后，执行入口函数 'go' 时程序崩溃。
+   ```
+   [*] Executing entry point 'go'...
+   [*] Executing function 'go' at address 0000022449ebdfb4
+   PS C:\Users\user\Desktop\Zv0.1.1\server.beacon>  // 崩溃
+   ```
+
+2. **缺少调试信息**: 崩溃时没有足够的调试信息来诊断崩溃原因。
+
+3. **参数验证不足**: 缺少对函数地址、参数和内存区域的验证。
 
 ### 修改内容
 
-#### 1. `BeaconApi.h`
-*   **添加缺失的类型定义**: 添加了 `HEAP_RECORD`, `BEACON_INFO`, `DATA_STORE_OBJECT`, `PBEACON_SYSCALLS` 等结构体定义。
-*   **添加缺失的函数原型**: 添加了所有新增 Beacon API 的函数原型声明，如 `BeaconAddValue`, `BeaconInformation`, `BeaconVirtualAlloc` 等。
-*   **修正 API 哈希值**: 使用 `CoffeeLdr.c` 中的 `HashString` 算法重新计算了所有新增 API 的哈希值，确保符号解析能够正确匹配。
-    *   例如：`COFFAPI_BEACONGETVALUE` 从 `0x9d3f7e2c` 修正为 `0xd9acafea`。
+#### 1. `CoffeeLdr.c`
+*   **增强参数验证**: 
+    - 添加了对 `Coffee` 和 `Function` 参数的 NULL 检查
+    - 验证 `Coffee` 结构体的完整性（`SecMap` 和 `Header`）
+    - 检查符号表中的节号是否有效
+    - 验证计算出的函数地址是否在有效范围内
+*   **详细的内存缓冲区检查**:
+    - 使用 `IsBadReadPtr` 验证参数缓冲区是否可读
+    - 检查缓冲区大小是否合理（设置1MB限制）
+    - 显示参数缓冲区的内容（前4字节）用于调试
+    - 特别关注可能导致 `BeaconDataParse` 崩溃的问题
+*   **改进调试输出**: 
+    - 计算并显示函数在代码段中的偏移地址
+    - 添加执行前的详细状态检查
+    - 分步骤显示函数调用的参数
+    - 成功执行后输出确认信息
+*   **增强的地址验证**:
+    - 验证函数地址是否在代码段范围内
+    - 显示代码段基址和大小信息
 
-#### 2. `BeaconApi.c`
-*   **修正 `BeaconInformation` 实现**: 移除了对不存在的 `version` 成员的赋值操作。
-*   **修正 `BeaconSetThreadContext` 签名**: 将第二个参数类型从 `PCONTEXT` 修改为 `const CONTEXT *` 以匹配头文件声明和 Windows API 标准。
-*   **修复 `BeaconGetValue` 崩溃问题**: 重写了键值存储系统的实现：
-    *   使用更稳定的 djb2 哈希算法（与 CoffeeLdr.c 一致）
-    *   添加了 `g_beaconKeys` 数组来存储实际的键字符串
-    *   实现了开放寻址法来处理哈希冲突
-    *   在查找时使用 `strcmp` 确保找到正确的键
-    *   改进了错误检查和边界检查
+#### 2. `CoffeeLdr.h`
+*   **添加异常处理头文件**: 包含 `<excpt.h>` 头文件以支持 Windows 异常处理机制。
+
+#### 3. `Makefile`
+*   **启用异常处理**: 添加 `-fexceptions` 编译器选项
+*   **添加 CoffeeLdr 编译目标**: 方便单独编译测试 CoffeeLdr 模块
 
 ### 修复细节
 
-#### BeaconGetValue 崩溃修复
-原来的实现存在以下问题：
-- 哈希算法过于简单，容易产生冲突
-- 没有存储实际的键，无法验证键的匹配
-- 缺少哈希冲突处理机制
-
-修复后的实现：
+#### 内存缓冲区验证
 ```c
-// 使用改进的 djb2 哈希算法
-unsigned long hash = 5381;
-for (const char* p = key; *p; p++) {
-    hash = ((hash << 5) + hash) + *p; // hash * 33 + c
+// 验证参数缓冲区
+if (Argument && Size > 0) {
+    DEBUG_PRINT("[*] Validating argument buffer (size: %lu)...\n", (ULONG)Size);
+    
+    // 检查缓冲区大小是否合理
+    if (Size > 1024 * 1024) { // 1MB 限制
+        DEBUG_PRINT("[!] Warning: Argument size is very large (%lu bytes)\n", (ULONG)Size);
+    }
+    
+    // 检查参数是否为有效指针
+    if (IsBadReadPtr(Argument, Size)) {
+        DEBUG_PRINT("[!] Argument buffer is not readable or invalid\n");
+        DEBUG_PRINT("[!] This may cause BeaconDataParse to crash\n");
+        DEBUG_PRINT("[!] Buffer address: %p, size: %lu\n", Argument, (ULONG)Size);
+    } else {
+        DEBUG_PRINT("[*] Argument buffer validation passed\n");
+        
+        // 显示前几个字节的内容（用于调试）
+        if (Size >= 4) {
+            DWORD* firstDword = (DWORD*)Argument;
+            DEBUG_PRINT("[*] First 4 bytes: 0x%08lx\n", *firstDword);
+        }
+    }
 }
-int index = hash % 256;
-
-// 使用开放寻址法处理冲突
-do {
-    if (g_beaconKeys[index] == NULL) {
-        return NULL; // 键不存在
-    }
-    if (strcmp(g_beaconKeys[index], key) == 0) {
-        return g_beaconValues[index];
-    }
-    index = (index + 1) % 256;
-} while (index != original_index);
 ```
 
-### 验证
-*   编写了 `hash_test_linux.c` 工具验证哈希算法，确认了旧的哈希值是不正确的，并生成了正确的哈希值。
-*   确认 `BeaconApiCounter` (52) 与 `BeaconApi` 数组中的条目数量一致。
-*   测试了修复后的键值存储功能，确保不会因为哈希冲突导致程序崩溃。
+#### 函数地址验证和偏移计算
+```c
+// 验证函数地址
+if (!CoffeeMain || (UINT_PTR)CoffeeMain < 0x10000) {
+    DEBUG_PRINT("[!] Invalid function address: %p\n", CoffeeMain);
+    return FALSE;
+}
 
-通过以上修改，`beacon.exe` 应该能够成功编译，并且能够正确解析 `__imp_BeaconGetValue` 等符号，同时避免因哈希冲突导致的程序崩溃，从而成功加载并运行 `no-consolation.x64.o`。
+// 计算函数相对于代码段基址的偏移
+UINT_PTR codeSectionBase = (UINT_PTR)Coffee->SecMap[Coffee->dwCodeSection].Ptr;
+UINT_PTR functionOffset = (UINT_PTR)CoffeeMain - codeSectionBase;
+
+DEBUG_PRINT("[*] Function offset in code section: 0x%llx (base: %p)\n", functionOffset, (PVOID)codeSectionBase);
+```
+
+#### 执行前状态检查
+```c
+// 执行前的最后检查
+DEBUG_PRINT("[*] Pre-execution checks:\n");
+DEBUG_PRINT("  - Code section base: %p\n", Coffee->SecMap[Coffee->dwCodeSection].Ptr);
+DEBUG_PRINT("  - Function address: %p\n", CoffeeMain);
+DEBUG_PRINT("  - Arguments: %p, %lu\n", Argument, (ULONG)Size);
+DEBUG_PRINT("  - Old protection: 0x%lx\n", OldProtection);
+
+// 调用函数
+DEBUG_PRINT("[*] Calling function '%s'...\n", Function);
+CoffeeMain( (PCHAR)Argument, (ULONG)Size );
+```
+
+### 修复编译问题
+在修复过程中还发现并解决了一个编译错误：
+- **缺少头文件**: `source/utils.c` 中使用了 `LONG_MAX` 但没有包含 `<limits.h>` 头文件
+- **解决方案**: 在 `source/utils.c` 开头添加了 `#include <limits.h>`
+
+### 验证编译
+所有修改完成后，成功编译了：
+- `dist/NoConsolation.x64.o` - x64 版本
+- `dist/NoConsolation.x86.o` - x86 版本
+
+### 预期效果
+通过以上修改，当程序再次崩溃时，调试输出将包含：
+1. **详细的函数信息**: 函数地址、代码段偏移、基址等
+2. **完整的参数验证**: 缓冲区可读性检查、大小验证、内容预览
+3. **执行前状态**: 代码段状态、权限设置、参数值等
+4. **崩溃定位**: 通过调试输出逐步定位崩溃发生的位置
+
+这些修改将显著提高调试能力，帮助快速定位崩溃的具体原因。
