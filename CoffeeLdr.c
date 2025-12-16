@@ -184,9 +184,31 @@ BOOL CoffeeExecuteFunction( PCOFFEE Coffee, PCHAR Function, PVOID Argument, SIZE
             DEBUG_PRINT("    Buffer: %p\n", Argument);
             DEBUG_PRINT("    Length: %lu\n", (ULONG)Size);
             
-            CoffeeMain( (PCHAR)Argument, (ULONG)Size );
+            // 添加额外的参数验证
+            DEBUG_PRINT("[*] Final validation before call:\n");
+            DEBUG_PRINT("    CoffeeMain: %p\n", CoffeeMain);
+            DEBUG_PRINT("    Argument buffer readable: %s\n", 
+                       !IsBadReadPtr(Argument, Size >= 4 ? 4 : Size) ? "YES" : "NO");
+            DEBUG_PRINT("    Size range check: %s\n", 
+                       (Size > 0 && Size <= 1024*1024*10) ? "VALID" : "INVALID");
             
-            DEBUG_PRINT("[*] Function '%s' completed successfully\n", Function);
+            __try {
+                DEBUG_PRINT("[*] Entering try block...\n");
+                CoffeeMain( (PCHAR)Argument, (ULONG)Size );
+                DEBUG_PRINT("[*] Function '%s' completed successfully\n", Function);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                DWORD exceptionCode = GetExceptionCode();
+                PEXCEPTION_POINTERS exceptionInfo = GetExceptionInformation();
+                DEBUG_PRINT("[!] Exception occurred during function call!\n");
+                DEBUG_PRINT("[!] Exception code: 0x%08lx\n", exceptionCode);
+                if (exceptionInfo) {
+                    DEBUG_PRINT("[!] Exception address: %p\n", exceptionInfo->ExceptionRecord->ExceptionAddress);
+                    DEBUG_PRINT("[!] Exception flags: 0x%08lx\n", exceptionInfo->ExceptionRecord->ExceptionFlags);
+                }
+                DEBUG_PRINT("[!] This indicates the BOF function '%s' crashed internally\n", Function);
+                DEBUG_PRINT("[!] The crash is NOT in CoffeeLdr but in the BOF code itself\n");
+                return FALSE;
+            }
             
             VirtualProtect(Coffee->SecMap[Coffee->dwCodeSection].Ptr, 
                           Coffee->SecMap[Coffee->dwCodeSection].Size, 

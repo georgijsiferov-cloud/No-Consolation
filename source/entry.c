@@ -12,6 +12,59 @@
 int go(IN PCHAR Buffer, IN ULONG Length)
 {
     datap           parser        = { 0 };
+    
+    // 调试信息：检查函数参数
+    PRINT_DEBUG("[DEBUG] go() function called with Buffer=%p, Length=%lu", Buffer, Length);
+    
+    // 验证参数
+    if (!Buffer) {
+        PRINT_ERR("Buffer is NULL - this will cause BeaconDataParse to crash");
+        return 1;
+    }
+    
+    if (Length == 0) {
+        PRINT_ERR("Length is 0 - no data to parse");
+        return 1;
+    }
+    
+    if (Length > 1024 * 1024) { // 1MB限制
+        PRINT_ERR("Length is too large (%lu bytes) - this may cause issues", Length);
+    }
+    
+    // 验证Buffer是否可读
+    if (IsBadReadPtr(Buffer, Length >= 16 ? 16 : Length)) {
+        PRINT_ERR("Buffer is not readable - this will cause BeaconDataParse to crash");
+        PRINT_ERR("Buffer: %p, Length: %lu", Buffer, Length);
+        return 1;
+    }
+    
+    // 显示前几个字节的内容
+    if (Length >= 4) {
+        volatile DWORD firstBytes = *(volatile DWORD*)Buffer;
+        PRINT_DEBUG("[DEBUG] Buffer first 4 bytes: 0x%08lx", firstBytes);
+        if (0) { (void)firstBytes; } // 防止未使用变量警告
+    }
+    
+    PRINT_DEBUG("[DEBUG] About to call BeaconDataParse...");
+    
+    // 初始化parser
+    memset(&parser, 0, sizeof(datap));
+    
+    // 调用BeaconDataParse - 这里崩溃表明参数有问题
+    BeaconDataParse(&parser, Buffer, Length);
+    
+    PRINT_DEBUG("[DEBUG] BeaconDataParse completed successfully");
+    
+    // 验证parser是否正确初始化
+    if (parser.original == NULL || parser.size == 0) {
+        PRINT_ERR("BeaconDataParse failed - parser not properly initialized");
+        PRINT_ERR("Parser.original: %p, Parser.size: %lu", parser.original, parser.size);
+        return 1;
+    }
+    
+    PRINT_DEBUG("[DEBUG] Parser initialized: original=%p, size=%lu, offset=%lu", 
+               parser.original, parser.size, parser.offset);
+    
     int             pe_length     = 0;
     LPSTR           pe_name       = NULL;
     LPWSTR          pe_wname      = NULL;

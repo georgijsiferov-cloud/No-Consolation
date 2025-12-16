@@ -1,5 +1,158 @@
 # 修改日志
 
+## 修复 BOF 执行崩溃问题 (2024-12-16)
+
+### 问题描述
+BOF在执行 `CoffeeMain( (PCHAR)Argument, (ULONG)Size );` 时直接崩溃，没有提供足够的调试信息来定位崩溃原因。原始崩溃日志：
+```
+[*] Executing function 'go' at address 000001eb201ddfb4
+[*] Function arguments: 000001eb20217760 (size: 27855)
+[*] Calling function 'go'...
+[*] Function will be called with:
+    Buffer: 000001eb20217760
+    Length: 27855
+PS C:\Users\user\Desktop\Zv0.1.1\server.beacon>  // 崩溃
+```
+
+### 根本原因分析
+崩溃发生在两个可能的位置：
+1. **CoffeeLdr 调用 BOF 函数时**: `CoffeeMain( (PCHAR)Argument, (ULONG)Size );` 
+2. **BOF 内部执行时**: `BeaconDataParse(&parser, Buffer, Length);`
+
+### 修改内容
+
+#### 1. `CoffeeLdr.c` - 增强异常处理和调试
+```c
+// 添加异常处理包装器
+__try {
+    DEBUG_PRINT("[*] Entering try block...\n");
+    CoffeeMain( (PCHAR)Argument, (ULONG)Size );
+    DEBUG_PRINT("[*] Function '%s' completed successfully\n", Function);
+} __except(EXCEPTION_EXECUTE_HANDLER) {
+    DWORD exceptionCode = GetExceptionCode();
+    PEXCEPTION_POINTERS exceptionInfo = GetExceptionInformation();
+    DEBUG_PRINT("[!] Exception occurred during function call!\n");
+    DEBUG_PRINT("[!] Exception code: 0x%08lx\n", exceptionCode);
+    if (exceptionInfo) {
+        DEBUG_PRINT("[!] Exception address: %p\n", exceptionInfo->ExceptionRecord->ExceptionAddress);
+        DEBUG_PRINT("[!] Exception flags: 0x%08lx\n", exceptionInfo->ExceptionRecord->ExceptionFlags);
+    }
+    DEBUG_PRINT("[!] This indicates the BOF function '%s' crashed internally\n", Function);
+    DEBUG_PRINT("[!] The crash is NOT in CoffeeLdr but in the BOF code itself\n");
+    return FALSE;
+}
+```
+
+#### 2. `entry.c` - BOF 函数参数验证
+```c
+int go(IN PCHAR Buffer, IN ULONG Length)
+{
+    datap parser = { 0 };
+    
+    // 调试信息：检查函数参数
+    PRINT_DEBUG("[DEBUG] go() function called with Buffer=%p, Length=%lu", Buffer, Length);
+    
+    // 验证参数
+    if (!Buffer) {
+        PRINT_ERR("Buffer is NULL - this will cause BeaconDataParse to crash");
+        return 1;
+    }
+    
+    if (Length == 0) {
+        PRINT_ERR("Length is 0 - no data to parse");
+        return 1;
+    }
+    
+    // 验证Buffer是否可读
+    if (IsBadReadPtr(Buffer, Length >= 16 ? 16 : Length)) {
+        PRINT_ERR("Buffer is not readable - this will cause BeaconDataParse to crash");
+        PRINT_ERR("Buffer: %p, Length: %lu", Buffer, Length);
+        return 1;
+    }
+    
+    // 初始化parser
+    memset(&parser, 0, sizeof(datap));
+    
+    // 调用BeaconDataParse - 这里崩溃表明参数有问题
+    BeaconDataParse(&parser, Buffer, Length);
+    
+    PRINT_DEBUG("[DEBUG] BeaconDataParse completed successfully");
+    
+    // 验证parser是否正确初始化
+    if (parser.original == NULL || parser.size == 0) {
+        PRINT_ERR("BeaconDataParse failed - parser not properly initialized");
+        PRINT_ERR("Parser.original: %p, Parser.size: %lu", parser.original, parser.size);
+        return 1;
+    }
+}
+```
+
+#### 3. `include/output.h` - 添加调试宏
+```c
+#if defined(DEBUG)
+ #define PRINT_DEBUG(...) { \
+     BeaconPrintf(CALLBACK_OUTPUT, __VA_ARGS__); \
+ }
+#else
+ #define PRINT_DEBUG(...)
+#endif
+```
+
+### 调试信息增强
+
+#### 函数调用前验证
+```c
+// 添加额外的参数验证
+DEBUG_PRINT("[*] Final validation before call:\n");
+DEBUG_PRINT("    CoffeeMain: %p\n", CoffeeMain);
+DEBUG_PRINT("    Argument buffer readable: %s\n", 
+           !IsBadReadPtr(Argument, Size >= 4 ? 4 : Size) ? "YES" : "NO");
+DEBUG_PRINT("    Size range check: %s\n", 
+           (Size > 0 && Size <= 1024*1024*10) ? "VALID" : "INVALID");
+```
+
+#### 参数内容预览
+```c
+// 显示前几个字节的内容
+if (Length >= 4) {
+    DWORD firstBytes = *(DWORD*)Buffer;
+    PRINT_DEBUG("[DEBUG] Buffer first 4 bytes: 0x%08lx", firstBytes);
+}
+```
+
+### 异常类型诊断
+通过异常处理，现在可以区分：
+1. **CoffeeLdr 内部崩溃**: 参数验证失败、内存访问错误等
+2. **BOF 函数崩溃**: BOF代码执行时的段错误、访问违规等
+3. **BeaconDataParse 崩溃**: 参数格式错误、数据损坏等
+
+### 预期调试输出
+修复后，崩溃时将输出：
+```
+[DEBUG] go() function called with Buffer=000001eb20217760, Length=27855
+[DEBUG] Buffer first 4 bytes: 0x00000012
+[DEBUG] About to call BeaconDataParse...
+[DEBUG] BeaconDataParse completed successfully
+[DEBUG] Parser initialized: original=000001eb20217760, size=27855, offset=0
+[*] Calling function 'go'...
+[*] Final validation before call:
+    CoffeeMain: 000001eb201ddfb4
+    Argument buffer readable: YES
+    Size range check: VALID
+[*] Entering try block...
+[!] Exception occurred during function call!
+[!] Exception code: 0xc0000005  // ACCESS_VIOLATION
+[!] Exception address: 000001eb201dxxxx  // BOF内部地址
+[!] This indicates the BOF function 'go' crashed internally
+```
+
+这将明确显示：
+- 参数验证通过
+- 崩溃发生在BOF函数内部
+- 具体的异常类型和地址
+
+---
+
 ## 修复 CoffeeLoad 崩溃问题
 
 ### 问题描述
