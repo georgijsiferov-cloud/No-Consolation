@@ -18,6 +18,14 @@
 #endif
 
 #if defined(DEBUG)
+ #define PRINT_DEBUG(...) { \
+     BeaconPrintf(CALLBACK_OUTPUT, __VA_ARGS__); \
+ }
+#else
+ #define PRINT_DEBUG(...)
+#endif
+
+#if defined(DEBUG)
  #define DPRINT_ERR(...) { \
      BeaconPrintf(CALLBACK_ERROR, "ERROR: %s:%d:%s(): ", __FILE__, __LINE__, __FUNCTION__); \
      BeaconPrintf(CALLBACK_ERROR, __VA_ARGS__); \
