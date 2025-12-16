@@ -401,21 +401,35 @@ BOOL proxy_FreeLibrary(HMODULE hLibModule)
 static void* g_beaconValues[256] = {0};  // 简单的键值存储
 static int g_beaconValueCount = 0;
 
+// 存储键的数组，用于解决哈希冲突
+static const char* g_beaconKeys[256] = {0};
+
 // Key/Value store functions - 真正实现
 BOOL BeaconAddValue(const char* key, void* ptr)
 {
     if (!key || !ptr || g_beaconValueCount >= 256)
         return FALSE;
     
-    // 简单的哈希映射（这里简化处理）
-    int hash = 0;
+    // 改进的哈希映射，减少冲突
+    unsigned long hash = 5381;
     for (const char* p = key; *p; p++) {
-        hash = (hash * 31 + *p) % 256;
+        hash = ((hash << 5) + hash) + *p; // hash * 33 + c
     }
+    int index = hash % 256;
     
-    g_beaconValues[hash] = ptr;
-    g_beaconValueCount++;
-    return TRUE;
+    // 处理冲突 - 如果该位置已被占用，寻找下一个空位
+    int original_index = index;
+    do {
+        if (g_beaconKeys[index] == NULL) {
+            g_beaconKeys[index] = key;
+            g_beaconValues[index] = ptr;
+            g_beaconValueCount++;
+            return TRUE;
+        }
+        index = (index + 1) % 256;
+    } while (index != original_index);
+    
+    return FALSE; // 表已满
 }
 
 void* BeaconGetValue(const char* key)
@@ -423,13 +437,26 @@ void* BeaconGetValue(const char* key)
     if (!key)
         return NULL;
     
-    // 简单的哈希映射
-    int hash = 0;
+    // 使用相同的哈希算法
+    unsigned long hash = 5381;
     for (const char* p = key; *p; p++) {
-        hash = (hash * 31 + *p) % 256;
+        hash = ((hash << 5) + hash) + *p; // hash * 33 + c
     }
+    int index = hash % 256;
     
-    return g_beaconValues[hash];
+    // 查找匹配的键
+    int original_index = index;
+    do {
+        if (g_beaconKeys[index] == NULL) {
+            return NULL; // 键不存在
+        }
+        if (strcmp(g_beaconKeys[index], key) == 0) {
+            return g_beaconValues[index];
+        }
+        index = (index + 1) % 256;
+    } while (index != original_index);
+    
+    return NULL; // 未找到
 }
 
 BOOL BeaconRemoveValue(const char* key)
@@ -437,15 +464,29 @@ BOOL BeaconRemoveValue(const char* key)
     if (!key)
         return FALSE;
     
-    // 简单的哈希映射
-    int hash = 0;
+    // 使用相同的哈希算法
+    unsigned long hash = 5381;
     for (const char* p = key; *p; p++) {
-        hash = (hash * 31 + *p) % 256;
+        hash = ((hash << 5) + hash) + *p; // hash * 33 + c
     }
+    int index = hash % 256;
     
-    g_beaconValues[hash] = NULL;
-    g_beaconValueCount--;
-    return TRUE;
+    // 查找匹配的键
+    int original_index = index;
+    do {
+        if (g_beaconKeys[index] == NULL) {
+            return FALSE; // 键不存在
+        }
+        if (strcmp(g_beaconKeys[index], key) == 0) {
+            g_beaconKeys[index] = NULL;
+            g_beaconValues[index] = NULL;
+            g_beaconValueCount--;
+            return TRUE;
+        }
+        index = (index + 1) % 256;
+    } while (index != original_index);
+    
+    return FALSE; // 未找到
 }
 
 // Beacon Information - 简化实现
